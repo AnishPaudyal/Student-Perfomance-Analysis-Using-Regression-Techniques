@@ -1,0 +1,398 @@
+---
+title: "STAT 5533 Project Report: Predicting Student Grades"
+author: "Anish Paudyal"
+date: "2025-04-26"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+# Load required libraries
+library(tidyverse)    # Data manipulation and visualization
+library(caret)        # Model training and evaluation
+library(glmnet)       # LASSO and Ridge regression
+library(pls)          # PCR
+library(e1071)        # SVM
+library(BART)         # Bayesian Additive Regression Trees
+library(tree)         # Tree-based regression
+library(kableExtra)   # for table formatting
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Data Loading and Preprocessing
+student_math <- read.csv("student-mat.csv", sep = ";")
+student_port <- read.csv("student-por.csv", sep = ";")
+data <- rbind(student_math, student_port)
+
+# Convert categorical variables to factors
+categorical_vars <- c("school", "sex", "address", "famsize", "Pstatus", "Mjob", 
+                      "Fjob", "reason", "guardian", "schoolsup", "famsup", "paid", 
+                      "activities", "nursery", "higher", "internet", "romantic")
+data[categorical_vars] <- lapply(data[categorical_vars], as.factor)
+
+# Ensure consistent factor levels
+data[categorical_vars] <- lapply(data[categorical_vars], function(x) {
+  x <- as.factor(as.character(x))
+  levels(x) <- levels(x)[levels(x) %in% unique(x)]
+  x
+})
+
+# Define datasets
+data1 <- data  # Full dataset
+data4 <- data[data$G3 > 0, -c(31:32)]  # Zeros in G3 removed, G1 and G2 removed
+
+# Train-test split for data1
+train1_idx <- sample(1:nrow(data1), 0.8 * nrow(data1))
+train_reg_1 <- data1[train1_idx, ]
+test_reg_1 <- data1[-train1_idx, ]
+
+# Train-test split for data4
+train4_idx <- sample(1:nrow(data4), 0.8 * nrow(data4))
+train_reg_4 <- data4[train4_idx, ]
+test_reg_4 <- data4[-train4_idx, ]
+
+```
+
+## Introduction
+
+### Motivation
+
+Understanding the factors that influence student performance is crucial for educators and policymakers to improve educational outcomes. This project aims to predict students' final grades (G3) using various predictors and assess the effectiveness of different regression techniques.
+
+### Questions to be Answered
+
+We explore the following research questions:
+
+***1. Can we predict a student's final grade (G3) based on the existing predictors?***
+
+***2. Does feature selection improve predictive accuracy?***
+
+***3. How does dimensionality reduction affect predictive performance?***
+
+### Description of the Data
+
+The dataset comprises 1044 observations from two Portuguese secondary schools, with 30 predictors and three response variables (G1, G2, G3). Grades range from 0 to 20. We focus on:
+- **data1**: Full dataset with all observations and predictors.
+- **data4**: Dataset with G3=0 observations removed and predictors G1 and G2 excluded.
+
+## Methodology
+
+### Data Processing
+We combined `student-mat.csv` and `student-por.csv` into a dataset of 1044 observations. Two datasets were created:
+- **data1**: All observations and predictors.
+- **data4**: Observations with G3=0 removed, G1 and G2 removed.
+
+An 80/20 train-test split was applied to each dataset.
+
+### Analysis Techniques
+
+We applied seven regression techniques:
+
+1. Multiple Linear Regression (MLR)
+2. Lasso Regression
+3. Ridge Regression
+4. Principal Component Regression (PCR)
+5. Support Vector Regression (SVR) with linear, polynomial, and radial kernels
+6. Bayesian Additive Regression Trees (BART)
+7. Tree-based Regression
+
+These methods compare linear vs. non-linear models, feature selection (Lasso), and dimensionality reduction (PCR).
+
+### Similarities and Differences Between Methods
+- **MLR**: Baseline linear model.
+- **Lasso and Ridge**: Regularized linear models; Lasso performs feature selection.
+- **PCR**: Reduces dimensionality using principal components.
+- **SVR**: Captures non-linear relationships via kernels.
+- **BART and Tree-based Regression**: Non-parametric methods capturing complex interactions.
+
+## Results
+
+### Predictive Performance
+
+```{r models-data1, include=FALSE}
+# MLR for data1
+fit_mlr_1 <- lm(G3 ~ ., data = train_reg_1)
+pred_mlr_1 <- predict(fit_mlr_1, test_reg_1)
+mse_mlr_1 <- mean((test_reg_1$G3 - pred_mlr_1)^2)
+
+# Lasso for data1
+x1_train <- model.matrix(G3 ~ ., train_reg_1)[, -1]
+y1_train <- train_reg_1$G3
+fit_lasso_1 <- cv.glmnet(x1_train, y1_train, alpha = 1)
+bestlam_lasso_1 <- fit_lasso_1$lambda.min
+x1_test <- model.matrix(G3 ~ ., test_reg_1)[, -1]
+pred_lasso_1 <- predict(fit_lasso_1, s = bestlam_lasso_1, newx = x1_test)
+mse_lasso_1 <- mean((test_reg_1$G3 - pred_lasso_1)^2)
+
+# Ridge for data1
+fit_ridge_1 <- cv.glmnet(x1_train, y1_train, alpha = 0)
+bestlam_ridge_1 <- fit_ridge_1$lambda.min
+pred_ridge_1 <- predict(fit_ridge_1, s = bestlam_ridge_1, newx = x1_test)
+mse_ridge_1 <- mean((test_reg_1$G3 - pred_ridge_1)^2)
+
+# PCR for data1
+fit_pcr_1 <- pcr(G3 ~ ., data = train_reg_1, scale = TRUE, validation = "CV")
+ncomp_pcr_1 <- which.min(fit_pcr_1$validation$PRESS)
+pred_pcr_1 <- predict(fit_pcr_1, test_reg_1, ncomp = ncomp_pcr_1)
+mse_pcr_1 <- mean((test_reg_1$G3 - pred_pcr_1)^2)
+
+# SVR for data1
+fit_svr_linear_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "linear", cost = 1)
+fit_svr_poly_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "polynomial", cost = 1)
+fit_svr_radial_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "radial", cost = 1, gamma = 0.1)
+pred_svr_linear_1 <- predict(fit_svr_linear_1, test_reg_1)
+pred_svr_poly_1 <- predict(fit_svr_poly_1, test_reg_1)
+pred_svr_radial_1 <- predict(fit_svr_radial_1, test_reg_1)
+mse_svr_linear_1 <- mean((test_reg_1$G3 - pred_svr_linear_1)^2)
+mse_svr_poly_1 <- mean((test_reg_1$G3 - pred_svr_poly_1)^2)
+mse_svr_radial_1 <- mean((test_reg_1$G3 - pred_svr_radial_1)^2)
+
+# BART for data1
+predictors_1 <- train_reg_1[, setdiff(names(train_reg_1), "G3")]
+x1_bart_train <- model.matrix(G3 ~ ., train_reg_1)[, -1]
+x1_bart_test <- model.matrix(G3 ~ ., test_reg_1)[, -1]
+fit_bart_1 <- gbart(x1_bart_train, train_reg_1$G3, x.test = x1_bart_test, ntree = 100)
+pred_bart_1 <- fit_bart_1$yhat.test.mean
+mse_bart_1 <- mean((test_reg_1$G3 - pred_bart_1)^2)
+
+# Tree-based for data1
+fit_tree_1 <- tree(G3 ~ ., data = train_reg_1)
+pred_tree_1 <- predict(fit_tree_1, test_reg_1)
+mse_tree_1 <- mean((test_reg_1$G3 - pred_tree_1)^2)
+```
+
+```{r models-data4, include=FALSE}
+# MLR for data4
+fit_mlr_4 <- lm(G3 ~ ., data = train_reg_4)
+pred_mlr_4 <- predict(fit_mlr_4, test_reg_4)
+mse_mlr_4 <- mean((test_reg_4$G3 - pred_mlr_4)^2)
+
+# Lasso for data4
+x4_train <- model.matrix(G3 ~ ., train_reg_4)[, -1]
+y4_train <- train_reg_4$G3
+fit_lasso_4 <- cv.glmnet(x4_train, y4_train, alpha = 1)
+bestlam_lasso_4 <- fit_lasso_4$lambda.min
+x4_test <- model.matrix(G3 ~ ., test_reg_4)[, -1]
+pred_lasso_4 <- predict(fit_lasso_4, s = bestlam_lasso_4, newx = x4_test)
+mse_lasso_4 <- mean((test_reg_4$G3 - pred_lasso_4)^2)
+
+# Ridge for data4
+fit_ridge_4 <- cv.glmnet(x4_train, y4_train, alpha = 0)
+bestlam_ridge_4 <- fit_ridge_4$lambda.min
+pred_ridge_4 <- predict(fit_ridge_4, s = bestlam_ridge_4, newx = x4_test)
+mse_ridge_4 <- mean((test_reg_4$G3 - pred_ridge_4)^2)
+
+# PCR for data4
+fit_pcr_4 <- pcr(G3 ~ ., data = train_reg_4, scale = TRUE, validation = "CV")
+ncomp_pcr_4 <- which.min(fit_pcr_4$validation$PRESS)
+pred_pcr_4 <- predict(fit_pcr_4, test_reg_4, ncomp = ncomp_pcr_4)
+mse_pcr_4 <- mean((test_reg_4$G3 - pred_pcr_4)^2)
+
+# SVR for data4
+fit_svr_linear_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "linear", cost = 1)
+fit_svr_poly_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "polynomial", cost = 1)
+fit_svr_radial_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "radial", cost = 1, gamma = 0.1)
+pred_svr_linear_4 <- predict(fit_svr_linear_4, test_reg_4)
+pred_svr_poly_4 <- predict(fit_svr_poly_4, test_reg_4)
+pred_svr_radial_4 <- predict(fit_svr_radial_4, test_reg_4)
+mse_svr_linear_4 <- mean((test_reg_4$G3 - pred_svr_linear_4)^2)
+mse_svr_poly_4 <- mean((test_reg_4$G3 - pred_svr_poly_4)^2)
+mse_svr_radial_4 <- mean((test_reg_4$G3 - pred_svr_radial_4)^2)
+
+# BART for data4
+predictors_4 <- train_reg_4[, setdiff(names(train_reg_4), "G3")]
+x4_bart_train <- model.matrix(G3 ~ ., train_reg_4)[, -1]
+x4_bart_test <- model.matrix(G3 ~ ., test_reg_4)[, -1]
+fit_bart_4 <- gbart(x4_bart_train, train_reg_4$G3, x.test = x4_bart_test, ntree = 100)
+pred_bart_4 <- fit_bart_4$yhat.test.mean
+mse_bart_4 <- mean((test_reg_4$G3 - pred_bart_4)^2)
+
+# Tree-based for data4
+fit_tree_4 <- tree(G3 ~ ., data = train_reg_4)
+pred_tree_4 <- predict(fit_tree_4, test_reg_4)
+mse_tree_4 <- mean((test_reg_4$G3 - pred_tree_4)^2)
+```
+
+```{r mse-table}
+# Create MSE table for data1 and data4
+mse_data <- data.frame(
+  Model = c("MLR", "Lasso", "Ridge", "PCR", "SVR Linear", "SVR Polynomial", "SVR Radial", "BART", "Tree-based"),
+  MSE_data1 = c(mse_mlr_1, mse_lasso_1, mse_ridge_1, mse_pcr_1, mse_svr_linear_1, mse_svr_poly_1, mse_svr_radial_1, mse_bart_1, mse_tree_1),
+  MSE_data4 = c(mse_mlr_4, mse_lasso_4, mse_ridge_4, mse_pcr_4, mse_svr_linear_4, mse_svr_poly_4, mse_svr_radial_4, mse_bart_4, mse_tree_4)
+)
+
+# Format table for HTML output
+knitr::kable(mse_data, format = "html", caption = "Mean Squared Error (MSE) for regression models on data1 and data4. Bold indicates the best-performing model for each dataset.", digits = 2) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  kableExtra::row_spec(which.min(mse_data$MSE_data1), bold = TRUE, extra_css = "font-weight: bold;") %>%
+  kableExtra::row_spec(which.min(mse_data$MSE_data4), bold = TRUE, extra_css = "font-weight: bold;")
+```
+
+
+Table 1 shows the Mean Squared Error (MSE) for all models on `data1` and `data4`. BART performs best on `data1`, while SVR Radial excels on `data4`.
+
+
+
+```{r mse-barplot, fig.cap="Comparison of MSE across regression models for data1 and data4."}
+# Bar plot of MSE
+mse_long <- mse_data %>% 
+  pivot_longer(cols = c(MSE_data1, MSE_data4), names_to = "Dataset", values_to = "MSE") %>%
+  mutate(Dataset = if_else(Dataset == "MSE_data1", "data1", "data4"))
+
+ggplot(mse_long, aes(x = Model, y = MSE, fill = Dataset)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(x = "Regression Model", y = "Mean Squared Error (MSE)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Bar plot of MSE for data1, data2, data3, and data4
+# mse_long <- mse_data %>% 
+#   pivot_longer(cols = c(MSE_data1, MSE_data2, MSE_data3, MSE_data4), 
+#                names_to = "Dataset", 
+#                values_to = "MSE") %>%
+#   mutate(Dataset = case_when(
+#     Dataset == "MSE_data1" ~ "data1",
+#     Dataset == "MSE_data2" ~ "data2",
+#     Dataset == "MSE_data3" ~ "data3",
+#     Dataset == "MSE_data4" ~ "data4"
+#   ))
+# 
+# ggplot(mse_long, aes(x = Model, y = MSE, fill = Dataset)) +
+#   geom_bar(stat = "identity", position = "dodge") +
+#   theme_minimal() +
+#   labs(x = "Regression Model", y = "Mean Squared Error (MSE)") +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Figure 1 visually compares MSE across models for `data1` and `data4`.
+
+### Detailed Results for Best-Performing Models
+
+#### BART on data1
+
+BART achieved the lowest MSE on `data1`. The variable importance is calculated below:
+
+```{r bart-var-importance, fig.cap="Variable Importance for BART on data1."}
+
+
+var_counts <- colSums(fit_bart_1$varcount)
+
+var_imp_df <- tibble(
+  Variable   = names(var_counts),
+  Importance = var_counts
+) %>%
+  arrange(desc(Importance)) %>%
+  slice_head(n = 5)
+
+ggplot(var_imp_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(
+    x     = "Variable",
+    y     = "Inclusion Count",
+    title = "Top 5 Predictors by BART Tree Inclusion"
+  ) +
+  theme_minimal()
+
+```
+
+Figure 2 highlights key predictors like G1, G2, and absences.
+
+```{r bart-pred-vs-actual, fig.cap="Predicted vs. Actual G3 for BART on data1."}
+# Predicted vs. actual for BART
+plot_data <- data.frame(Actual = test_reg_1$G3, Predicted = pred_bart_1)
+ggplot(plot_data, aes(x = Actual, y = Predicted)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(x = "Actual G3", y = "Predicted G3") +
+  theme_minimal()
+```
+
+Figure 3 shows a good fit between predicted and actual G3 values.
+
+#### SVR Radial on data4
+SVR Radial performed best on `data4`:
+
+```{r svr-radial-pred-vs-actual, fig.cap="Predicted vs. Actual G3 for SVR Radial on data4."}
+# Predicted vs. actual for SVR Radial
+plot_data_4 <- data.frame(Actual = test_reg_4$G3, Predicted = pred_svr_radial_4)
+ggplot(plot_data_4, aes(x = Actual, y = Predicted)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(x = "Actual G3", y = "Predicted G3") +
+  theme_minimal()
+```
+
+Figure 4 demonstrates effective prediction without G1 and G2.
+
+### Impact of Feature Selection
+
+```{r lasso-coefs}
+# Lasso coefficients for data1 and data4
+lasso_coef_1 <- as.data.frame(as.matrix(coef(fit_lasso_1, s = bestlam_lasso_1)))
+lasso_coef_4 <- as.data.frame(as.matrix(coef(fit_lasso_4, s = bestlam_lasso_4)))
+lasso_coef_1$Feature <- rownames(lasso_coef_1)
+lasso_coef_4$Feature <- rownames(lasso_coef_4)
+
+# Rename coefficient columns
+colnames(lasso_coef_1)[1] <- "Coefficient_data1"
+colnames(lasso_coef_4)[1] <- "Coefficient_data4"
+
+# Merge coefficients, keeping all features
+lasso_table <- full_join(lasso_coef_1, lasso_coef_4, by = "Feature") %>%
+  filter(Feature != "(Intercept)") %>%
+  mutate(
+    Coefficient_data1 = replace_na(Coefficient_data1, 0),
+    Coefficient_data4 = replace_na(Coefficient_data4, 0)
+  ) %>%
+  filter(Coefficient_data1 != 0 | Coefficient_data4 != 0)
+
+knitr::kable(lasso_table, format = "html", caption = "Features selected by Lasso regression for data1 and data4.", digits = 2) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+Table 2 shows features selected by Lasso, indicating modest improvements in MSE on `data1`.
+
+### Effect of Dimensionality Reduction
+
+```{r pcr-mse-vs-components, fig.cap="MSE vs. Number of Components for PCR on data1 and data4."}
+# MSE vs. components for PCR
+pcr_mse_1 <- sapply(1:ncol(predictors_1), function(n) mean((test_reg_1$G3 - predict(fit_pcr_1, test_reg_1, ncomp = n))^2))
+pcr_mse_4 <- sapply(1:ncol(predictors_4), function(n) mean((test_reg_4$G3 - predict(fit_pcr_4, test_reg_4, ncomp = n))^2))
+pcr_data <- data.frame(
+  Components = c(1:ncol(predictors_1), 1:ncol(predictors_4)),
+  MSE = c(pcr_mse_1, pcr_mse_4),
+  Dataset = rep(c("data1", "data4"), times = c(ncol(predictors_1), ncol(predictors_4)))
+)
+
+ggplot(pcr_data, aes(x = Components, y = MSE, color = Dataset)) +
+  geom_line() +
+  labs(x = "Number of Components", y = "MSE") +
+  theme_minimal()
+```
+
+Figure 5 shows that PCR's MSE decreases with more components but does not outperform top models.
+
+## Discussion
+
+### Conclusive Remarks
+- **Predictability of G3**: G3 is predictable, with BART excelling on `data1` and SVR Radial on `data4`. Higher MSE on `data4` suggests G1 and G2 are key predictors.
+- **Feature Selection**: Lasso slightly improves accuracy on `data1`, but benefits are limited.
+- **Dimensionality Reduction**: PCR underperforms, indicating loss of predictive information.
+
+### Limitations
+- **Data Quality**: Zeros in G3 may represent dropouts, skewing results.
+- **Model Assumptions**: Linear models may miss non-linear relationships.
+- **Sample Size**: The 80/20 split may limit generalizability.
+
+### What We Would Do Differently
+- Implement hyperparameter tuning for SVR and PCR.
+- Use k-fold cross-validation for robust estimates.
+- Explore feature engineering (e.g., interactions).
+
+### Future Research Directions
+- Test Random Forests or neural networks.
+- Include external predictors (e.g., socioeconomic factors).
+- Investigate zeros in G3 to model dropout separately.
+```
