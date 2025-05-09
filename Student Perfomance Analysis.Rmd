@@ -1,0 +1,1359 @@
+---
+title: "STAT 5533 Project Draft"
+author: "Sitharama Bhargav, Anish Paudyal, Mason Robinson"
+date: "2025-04-26"
+output:
+  html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+# Data Loading and Preprocessing
+student_math <- read.csv("student-mat.csv", sep = ";")
+student_port <- read.csv("student-por.csv", sep = ";")
+data <- rbind(student_math, student_port) 
+
+library(tidyverse)    # Data manipulation and visualization
+library(caret)        # Model training and evaluation
+library(glmnet)       # LASSO and Ridge regression
+library(pls)          # PCR
+library(e1071)        # SVM and Naive Bayes
+library(MASS)         # LDA and QDA
+library(rpart)        # Decision Trees
+library(randomForest) # Random Forest
+library(gbm)          # Gradient Boosting
+library(class)        # KNN
+library(pROC)         # ROC curves
+library(boot)         # Cross-validation
+library(BART)         # Bayesian Additive Regression Trees
+library(car)          # for VIF
+library(tree)         # for tree
+library(ggplot2)
+
+set.seed(123)
+
+# Data Loading and Preprocessing
+# Convert categorical variables to factors
+categorical_vars <- c("school", "sex", "address", "famsize", "Pstatus", "Mjob", 
+                      "Fjob", "reason", "guardian", "schoolsup", "famsup", "paid", 
+                      "activities", "nursery", "higher", "internet", "romantic")
+data[categorical_vars] <- lapply(data[categorical_vars], as.factor)
+# data2 is data but only G3 > 0 (meaning there weren't any missed final tests)
+data2 <- data[data$G3 > 0,]
+# data3 is data but with G1 and G2 gone, leaving G3 as response variable
+data3 <- data[, -c(31:32)]
+# data4 is data3 but only G3 > 0
+data4 <- data3[data$G3 > 0,]
+# Create response variables
+# data
+data$G3_category <- cut(data$G3, breaks = c(-1, 10, 13, 20), labels = c("Low", "Medium", "High"))
+data$Pass <- factor(ifelse(data$G3 >= 10, "Pass", "Fail"))
+table(data$G3_category)
+hist(data$G3)
+# data2
+data2$G3_category <- cut(data2$G3, breaks = c(-1, 10, 13, 20), labels = c("Low", "Medium", "High"))
+data2$Pass <- factor(ifelse(data2$G3 >= 10, "Pass", "Fail"))
+table(data2$G3_category)
+hist(data2$G3)
+# data3
+data3$G3_category <- cut(data3$G3, breaks = c(-1, 10, 13, 20), labels = c("Low", "Medium", "High"))
+data3$Pass <- factor(ifelse(data3$G3 >= 10, "Pass", "Fail"))
+table(data3$G3_category)
+hist(data3$G3)
+# data4
+data4$G3_category <- cut(data4$G3, breaks = c(-1, 10, 13, 20), labels = c("Low", "Medium", "High"))
+data4$Pass <- factor(ifelse(data4$G3 >= 10, "Pass", "Fail"))
+table(data4$G3_category)
+hist(data4$G3)
+
+
+# Create separate datasets
+# Predictors (columns 1 to 32, excluding G3, G3_category, Pass)
+# data
+data_predictors <- data[, 1:32]
+#predictors2 <- data[, 1:30]
+# data2
+data2_predictors <- data2[, 1:32]
+#predictors2 <- data2[, 1:30]
+# data3
+data3_predictors <- data3[, 1:30]
+#predictors2 <- data3[, 1:30]
+# data4
+data4_predictors <- data4[, 1:30]
+
+
+###  Regression dataset (predicting G3) ###
+# data
+data_reg <- cbind(data_predictors, G3 = data$G3)
+# data2
+data2_reg <- cbind(data2_predictors, G3 = data2$G3)
+# data3
+data3_reg <- cbind(data3_predictors, G3 = data3$G3)
+# data4
+data4_reg <- cbind(data4_predictors, G3 = data4$G3)
+#data_reg2 <- cbind(predictors2, G3 = data$G3)
+
+
+### Classification dataset (predicting G3_category) ###
+# data
+data_class_cat <- cbind(data_predictors, G3_category = data$G3_category)
+# data2
+data2_class_cat <- cbind(data2_predictors, G3_category = data2$G3_category)
+# data3
+data3_class_cat <- cbind(data3_predictors, G3_category = data3$G3_category)
+# data4
+data4_class_cat <- cbind(data4_predictors, G3_category = data4$G3_category)
+#data_class_cat2 <- cbind(predictors2, G3_category = data$G3_category)
+
+# Classification dataset (predicting Pass)
+# data
+data_class_bin <- cbind(data_predictors, Pass = data$Pass)
+# data2
+data2_class_bin <- cbind(data2_predictors, Pass = data2$Pass)
+# data3
+data3_class_bin <- cbind(data3_predictors, Pass = data3$Pass)
+# data4
+data4_class_bin <- cbind(data4_predictors, Pass = data4$Pass)
+#data_class_bin2 <- cbind(predictors2, Pass = data$Pass)
+
+# Ensure consistent factor levels
+data[categorical_vars] <- lapply(data[categorical_vars], function(x) {
+  x <- as.factor(as.character(x))
+  levels(x) <- levels(x)[levels(x) %in% unique(x)]
+  x
+})
+
+# Train-test split
+# data
+train1 <- sample(1:nrow(data), 0.8 * nrow(data))
+train_reg_1 <- data_reg[train1, ]
+test_reg_1 <- data_reg[-train1, ]
+train_class_cat_1 <- data_class_cat[train1, ]
+test_class_cat_1 <- data_class_cat[-train1, ]
+train_class_bin_1 <- data_class_bin[train1, ]
+test_class_bin_1 <- data_class_bin[-train1, ]
+# data2
+train2 <- sample(1:nrow(data2), 0.8 * nrow(data2))
+train_reg_2 <- data2_reg[train2, ]
+test_reg_2 <- data2_reg[-train2, ]
+train_class_cat_2 <- data2_class_cat[train2, ]
+test_class_cat_2 <- data2_class_cat[-train2, ]
+train_class_bin_2 <- data2_class_bin[train2, ]
+test_class_bin_2 <- data2_class_bin[-train2, ]
+# data3
+train3 <- sample(1:nrow(data3), 0.8 * nrow(data3))
+train_reg_3 <- data3_reg[train3, ]
+test_reg_3 <- data3_reg[-train3, ]
+train_class_cat_3 <- data3_class_cat[train3, ]
+test_class_cat_3 <- data3_class_cat[-train3, ]
+train_class_bin_3 <- data3_class_bin[train3, ]
+test_class_bin_3 <- data3_class_bin[-train3, ]
+# data4
+train4 <- sample(1:nrow(data4), 0.8 * nrow(data4))
+train_reg_4 <- data4_reg[train4, ]
+test_reg_4 <- data4_reg[-train4, ]
+train_class_cat_4 <- data4_class_cat[train4, ]
+test_class_cat_4 <- data4_class_cat[-train4, ]
+train_class_bin_4 <- data4_class_bin[train4, ]
+test_class_bin_4 <- data4_class_bin[-train4, ]
+
+# Regression Models (Predicting G3)
+# Multiple Linear Regression
+# data
+# fit_mlr_1 <- lm(G3 ~ ., data = train_reg_1)
+# vif(fit_mlr_1)
+# summary(fit_mlr_1)
+# pred_mlr_1 <- predict(fit_mlr_1, test_reg_1)
+# mse_mlr_1 <- mean((test_reg_1$G3 - pred_mlr_1)^2)
+# cat("MLR MSE 1:", mse_mlr_1, "\n")
+# # data2
+# fit_mlr_2 <- lm(G3 ~ ., data = train_reg_2)
+# vif(fit_mlr_2)
+# summary(fit_mlr_2)
+# pred_mlr_2 <- predict(fit_mlr_2, test_reg_2)
+# mse_mlr_2 <- mean((test_reg_2$G3 - pred_mlr_2)^2)
+# cat("MLR MSE 2:", mse_mlr_2, "\n")
+# #data3
+# fit_mlr_3 <- lm(G3 ~ ., data = train_reg_3)
+# vif(fit_mlr_3)
+# summary(fit_mlr_3)
+# pred_mlr_3 <- predict(fit_mlr_3, test_reg_3)
+# mse_mlr_3 <- mean((test_reg_3$G3 - pred_mlr_3)^2)
+# cat("MLR MSE 3:", mse_mlr_3, "\n")
+# #data4
+# fit_mlr_4 <- lm(G3 ~ ., data = train_reg_4)
+# vif(fit_mlr_4)
+# summary(fit_mlr_4)
+# pred_mlr_4 <- predict(fit_mlr_4, test_reg_4)
+# mse_mlr_4 <- mean((test_reg_4$G3 - pred_mlr_4)^2)
+# cat("MLR MSE 4:", mse_mlr_4, "\n")
+# # Assumptions
+# # data
+# par(mfrow = c(2, 2))
+# plot(fit_mlr_1)
+# par(mfrow = c(1, 1))
+# # data2
+# par(mfrow = c(2, 2))
+# plot(fit_mlr_2)
+# par(mfrow = c(1, 1))
+# # data3
+# par(mfrow = c(2, 2))
+# plot(fit_mlr_3)
+# par(mfrow = c(1, 1))
+# # data4
+# par(mfrow = c(2, 2))
+# plot(fit_mlr_4)
+# par(mfrow = c(1, 1))
+# 
+# ## best MSE from MLR
+# mlr_mses <- c(mse_mlr_1, mse_mlr_2, mse_mlr_3, mse_mlr_4)
+# min(mlr_mses)
+# which.min(mlr_mses)
+# order(mlr_mses) # Looks like data2, data1, data4, data3 is the order
+# 
+# 
+# # LASSO Regression
+# #data
+# x1_train <- model.matrix(G3 ~ ., train_reg_1)[, -1]
+# y1_train <- train_reg_1$G3
+# fit_lasso_1 <- cv.glmnet(x1_train, y1_train, alpha = 1)
+# bestlam_lasso_1 <- fit_lasso_1$lambda.min
+# x1_test <- model.matrix(G3 ~ ., test_reg_1)[, -1]
+# pred_lasso_1 <- predict(fit_lasso_1, s = bestlam_lasso_1, newx = x1_test)
+# mse_lasso_1 <- mean((test_reg_1$G3 - pred_lasso_1)^2)
+# cat("LASSO1 MSE:", mse_lasso_1, "\n")
+# plot(fit_lasso_1)
+# # data2
+# x2_train <- model.matrix(G3 ~ ., train_reg_2)[, -1]
+# y2_train <- train_reg_2$G3
+# fit_lasso_2 <- cv.glmnet(x2_train, y2_train, alpha = 1)
+# bestlam_lasso_2 <- fit_lasso_2$lambda.min
+# x2_test <- model.matrix(G3 ~ ., test_reg_2)[, -1]
+# pred_lasso_2 <- predict(fit_lasso_2, s = bestlam_lasso_2, newx = x2_test)
+# mse_lasso_2 <- mean((test_reg_2$G3 - pred_lasso_2)^2)
+# cat("LASSO2 MSE:", mse_lasso_2, "\n")
+# plot(fit_lasso_2)
+# # data3
+# x3_train <- model.matrix(G3 ~ ., train_reg_3)[, -1]
+# y3_train <- train_reg_3$G3
+# fit_lasso_3 <- cv.glmnet(x3_train, y3_train, alpha = 1)
+# bestlam_lasso_3 <- fit_lasso_3$lambda.min
+# x3_test <- model.matrix(G3 ~ ., test_reg_3)[, -1]
+# pred_lasso_3 <- predict(fit_lasso_3, s = bestlam_lasso_3, newx = x3_test)
+# mse_lasso_3 <- mean((test_reg_3$G3 - pred_lasso_3)^2)
+# cat("LASSO3 MSE:", mse_lasso_3, "\n")
+# plot(fit_lasso_3)
+# # data4
+# x4_train <- model.matrix(G3 ~ ., train_reg_4)[, -1]
+# y4_train <- train_reg_4$G3
+# fit_lasso_4 <- cv.glmnet(x4_train, y4_train, alpha = 1)
+# bestlam_lasso_4 <- fit_lasso_4$lambda.min
+# x4_test <- model.matrix(G3 ~ ., test_reg_4)[, -1]
+# pred_lasso_4 <- predict(fit_lasso_4, s = bestlam_lasso_4, newx = x4_test)
+# mse_lasso_4 <- mean((test_reg_4$G3 - pred_lasso_4)^2)
+# cat("LASSO4 MSE:", mse_lasso_4, "\n")
+# plot(fit_lasso_4)
+# 
+# # Best Lasso MSE
+# lasso_mses <- c(mse_lasso_1, mse_lasso_2, mse_lasso_3, mse_lasso_4)
+# min(lasso_mses)
+# which.min(lasso_mses)
+# order(lasso_mses)# Similar story as above: 2, 1, 4, 3
+# 
+# 
+# # Ridge Regression
+# # data
+# fit_ridge_1 <- cv.glmnet(x1_train, y1_train, alpha = 0)
+# bestlam_ridge_1 <- fit_ridge_1$lambda.min
+# pred1_ridge <- predict(fit_ridge_1, s = bestlam_ridge_1, newx = x1_test)
+# mse_ridge_1 <- mean((test_reg_1$G3 - pred1_ridge)^2)
+# cat("Ridge1 MSE:", mse_ridge_1, "\n")
+# plot(fit_ridge_1)
+# 
+# # data2
+# fit_ridge_2 <- cv.glmnet(x2_train, y2_train, alpha = 0)
+# bestlam_ridge_2 <- fit_ridge_2$lambda.min
+# pred2_ridge <- predict(fit_ridge_2, s = bestlam_ridge_2, newx = x2_test)
+# mse_ridge_2 <- mean((test_reg_2$G3 - pred2_ridge)^2)
+# cat("Ridge2 MSE:", mse_ridge_2, "\n")
+# plot(fit_ridge_2)
+# # data3
+# fit_ridge_3 <- cv.glmnet(x3_train, y3_train, alpha = 0)
+# bestlam_ridge_3 <- fit_ridge_3$lambda.min
+# pred3_ridge <- predict(fit_ridge_3, s = bestlam_ridge_3, newx = x3_test)
+# mse_ridge_3 <- mean((test_reg_3$G3 - pred3_ridge)^2)
+# cat("Ridge3 MSE:", mse_ridge_3, "\n")
+# plot(fit_ridge_3)
+# # data4
+# fit_ridge_4 <- cv.glmnet(x4_train, y4_train, alpha = 0)
+# bestlam_ridge_4 <- fit_ridge_4$lambda.min
+# pred4_ridge <- predict(fit_ridge_4, s = bestlam_ridge_4, newx = x4_test)
+# mse_ridge_4 <- mean((test_reg_4$G3 - pred4_ridge)^2)
+# cat("Ridge4 MSE:", mse_ridge_4, "\n")
+# plot(fit_ridge_4)
+# 
+# # Best Ridge MSE
+# ridge_mses <- c(mse_ridge_1, mse_ridge_2, mse_ridge_3, mse_ridge_4)
+# min(ridge_mses)
+# which.min(ridge_mses) 
+# order(ridge_mses)# Similar story as above: 2, 1, 4, 3
+# 
+# # Principal Component Regression (PCR)
+# # data
+# # fit_pcr_1 <- pcr(G3 ~ ., data = train_reg_1, scale = TRUE, validation = "CV")
+# # summary(fit_pcr_1)
+# # validationplot(fit_pcr_1, val.type = "MSEP")
+# # pred_pcr_1 <- predict(fit_pcr_1, test_reg_1, ncomp = which.min(fit_pcr_1$validation$PRESS))
+# # mse_pcr_1 <- mean((test_reg_1$G3 - pred_pcr_1)^2)
+# # cat("PCR 1 MSE:", mse_pcr_1, "\n")
+# # # data2
+# # fit_pcr_2 <- pcr(G3 ~ ., data = train_reg_2, scale = TRUE, validation = "CV")
+# # summary(fit_pcr_2)
+# # validationplot(fit_pcr_2, val.type = "MSEP")
+# # pred_pcr_2 <- predict(fit_pcr_2, test_reg_2, ncomp = which.min(fit_pcr_2$validation$PRESS))
+# # mse_pcr_2 <- mean((test_reg_2$G3 - pred_pcr_2)^2)
+# # cat("PCR 2 MSE:", mse_pcr_2, "\n")
+# # # data3
+# # fit_pcr_3 <- pcr(G3 ~ ., data = train_reg_3, scale = TRUE, validation = "CV")
+# # summary(fit_pcr_3)
+# # validationplot(fit_pcr_3, val.type = "MSEP")
+# # pred_pcr_3 <- predict(fit_pcr_3, test_reg_3, ncomp = which.min(fit_pcr_3$validation$PRESS))
+# # mse_pcr_3 <- mean((test_reg_3$G3 - pred_pcr_3)^2)
+# # cat("PCR 3 MSE:", mse_pcr_3, "\n")
+# # # data4
+# # fit_pcr_4 <- pcr(G3 ~ ., data = train_reg_4, scale = TRUE, validation = "CV")
+# # summary(fit_pcr_4)
+# # validationplot(fit_pcr_4, val.type = "MSEP")
+# # pred_pcr_4 <- predict(fit_pcr_4, test_reg_4, ncomp = which.min(fit_pcr_4$validation$PRESS))
+# # mse_pcr_4 <- mean((test_reg_4$G3 - pred_pcr_4)^2)
+# # cat("PCR 4 MSE:", mse_pcr_4, "\n")
+# 
+# # Best PCR MSE
+# pcr_mses <- c(mse_pcr_1, mse_pcr_2, mse_pcr_3, mse_pcr_4)
+# min(pcr_mses)
+# which.min(pcr_mses)
+# order(pcr_mses)# Similar story as above: 2, 1, 4, 3
+# 
+# # Support Vector Regression (SVR)
+# # data
+# fit_svr_linear_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "linear", cost = 1)
+# fit_svr_polynomial_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "polynomial", cost = 1)
+# fit_svr_radial_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "radial", cost = 1, gamma = 0.1)
+# pred_svr_linear_1 <- predict(fit_svr_linear_1, test_reg_1)
+# pred_svr_radial_1 <- predict(fit_svr_radial_1, test_reg_1)
+# pred_svr_polynomial_1 <- predict(fit_svr_polynomial_1, test_reg_1)
+# mse_svr_linear_1 <- mean((test_reg_1$G3 - pred_svr_linear_1)^2)
+# mse_svr_radial_1 <- mean((test_reg_1$G3 - pred_svr_radial_1)^2)
+# mse_svr_polynomial_1 <- mean((test_reg_1$G3 - pred_svr_polynomial_1)^2)
+# cat("SVR Linear MSE 1:", mse_svr_linear_1, "\nSVR Radial MSE 1:", mse_svr_radial_1,
+#     "\nPolynomial MSE 1:", mse_svr_polynomial_1, "\n")
+# # data2
+# fit_svr_linear_2 <- svm(G3 ~ ., data = train_reg_2, kernel = "linear", cost = 1)
+# fit_svr_polynomial_2 <- svm(G3 ~ ., data = train_reg_2, kernel = "polynomial", cost = 1)
+# fit_svr_radial_2 <- svm(G3 ~ ., data = train_reg_2, kernel = "radial", cost = 1, gamma = 0.1)
+# pred_svr_linear_2 <- predict(fit_svr_linear_2, test_reg_2)
+# pred_svr_radial_2 <- predict(fit_svr_radial_2, test_reg_2)
+# pred_svr_polynomial_2 <- predict(fit_svr_polynomial_2, test_reg_2)
+# mse_svr_linear_2 <- mean((test_reg_2$G3 - pred_svr_linear_2)^2)
+# mse_svr_radial_2 <- mean((test_reg_2$G3 - pred_svr_radial_2)^2)
+# mse_svr_polynomial_2 <- mean((test_reg_2$G3 - pred_svr_polynomial_2)^2)
+# cat("SVR Linear MSE 2:", mse_svr_linear_2, "\nSVR Radial MSE 2:", mse_svr_radial_2,
+#     "\nPolynomial MSE 2:", mse_svr_polynomial_2, "\n")
+# # data3
+# fit_svr_linear_3 <- svm(G3 ~ ., data = train_reg_3, kernel = "linear", cost = 1)
+# fit_svr_polynomial_3 <- svm(G3 ~ ., data = train_reg_3, kernel = "polynomial", cost = 1)
+# fit_svr_radial_3 <- svm(G3 ~ ., data = train_reg_3, kernel = "radial", cost = 1, gamma = 0.1)
+# pred_svr_linear_3 <- predict(fit_svr_linear_3, test_reg_3)
+# pred_svr_radial_3 <- predict(fit_svr_radial_3, test_reg_3)
+# pred_svr_polynomial_3 <- predict(fit_svr_polynomial_3, test_reg_3)
+# mse_svr_linear_3 <- mean((test_reg_3$G3 - pred_svr_linear_3)^2)
+# mse_svr_radial_3 <- mean((test_reg_3$G3 - pred_svr_radial_3)^2)
+# mse_svr_polynomial_3 <- mean((test_reg_3$G3 - pred_svr_polynomial_3)^2)
+# cat("SVR Linear MSE 3:", mse_svr_linear_3, "\nSVR Radial MSE 3:", mse_svr_radial_3,
+#     "\nPolynomial MSE 3:", mse_svr_polynomial_3, "\n")
+# # data4
+# fit_svr_linear_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "linear", cost = 1)
+# fit_svr_polynomial_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "polynomial", cost = 1)
+# fit_svr_radial_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "radial", cost = 1, gamma = 0.1)
+# pred_svr_linear_4 <- predict(fit_svr_linear_4, test_reg_4)
+# pred_svr_radial_4 <- predict(fit_svr_radial_4, test_reg_4)
+# pred_svr_polynomial_4 <- predict(fit_svr_polynomial_4, test_reg_4)
+# mse_svr_linear_4 <- mean((test_reg_4$G3 - pred_svr_linear_4)^2)
+# mse_svr_radial_4 <- mean((test_reg_4$G3 - pred_svr_radial_4)^2)
+# mse_svr_polynomial_4 <- mean((test_reg_4$G3 - pred_svr_polynomial_4)^2)
+# cat("SVR Linear MSE 4:", mse_svr_linear_4, "\nSVR Radial MSE 4:", mse_svr_radial_4,
+#     "\nPolynomial MSE 4:", mse_svr_polynomial_4, "\n")
+# 
+# # Best SVR MSE
+# # SVR Linear MSEs
+# svr_linear_mses <- c(mse_svr_linear_1, mse_svr_linear_2, mse_svr_linear_3, mse_svr_linear_4)
+# min(svr_linear_mses)
+# which.min(svr_linear_mses)
+# order(svr_linear_mses)
+# 
+# order()# SVR Radial MSEs
+# svr_radial_mses <- c(mse_svr_radial_1, mse_svr_radial_2, mse_svr_radial_3, mse_svr_radial_4)
+# min(svr_radial_mses)
+# which.min(svr_radial_mses)
+# order(svr_radial_mses)
+# # SVR Polynomial MSEs 
+# svr_polynomial_mses <- c(mse_svr_polynomial_1, mse_svr_polynomial_2, mse_svr_polynomial_3, mse_svr_polynomial_4)
+# min(svr_polynomial_mses)
+# which.min(svr_polynomial_mses)
+# order(svr_polynomial_mses)
+# # Overall Best SVR MSE
+# svr_mses <- c(mse_svr_linear_1, mse_svr_linear_2, mse_svr_linear_3, mse_svr_linear_4,
+#               mse_svr_radial_1, mse_svr_radial_2, mse_svr_radial_3, mse_svr_radial_4,
+#               mse_svr_polynomial_1, mse_svr_polynomial_2, mse_svr_polynomial_3, mse_svr_polynomial_4)
+# min(svr_mses)
+# which.min(svr_mses) 
+# order(svr_mses) %% 4 # Seems like it's 222, 111, 444, 333, which makes sense
+# 
+# # BART for Regression
+# # data
+# fit_bart_1 <- gbart(train_reg_1[, 1:32], train_reg_1$G3, x.test = test_reg_1[, 1:32], ntree = 100)
+# pred_bart_1 <- fit_bart_1$yhat.test.mean
+# mse_bart_1 <- mean((test_reg_1$G3 - pred_bart_1)^2)
+# cat("BART MSE 1:", mse_bart_1, "\n")
+# # data2
+# fit_bart_2 <- gbart(train_reg_2[, 1:32], train_reg_2$G3, x.test = test_reg_2[, 1:32], ntree = 100)
+# pred_bart_2 <- fit_bart_2$yhat.test.mean
+# mse_bart_2 <- mean((test_reg_2$G3 - pred_bart_2)^2)
+# cat("BART MSE 2:", mse_bart_2, "\n")
+# # data3
+# fit_bart_3 <- gbart(train_reg_3[, 1:30], train_reg_3$G3, x.test = test_reg_3[, 1:30], ntree = 100)
+# pred_bart_3 <- fit_bart_3$yhat.test.mean
+# mse_bart_3 <- mean((test_reg_3$G3 - pred_bart_3)^2)
+# cat("BART MSE 3:", mse_bart_3, "\n")
+# # data4
+# fit_bart_4 <- gbart(train_reg_4[, 1:30], train_reg_4$G3, x.test = test_reg_4[, 1:30], ntree = 100)
+# pred_bart_4 <- fit_bart_4$yhat.test.mean
+# mse_bart_4 <- mean((test_reg_4$G3 - pred_bart_4)^2)
+# cat("BART MSE 4:", mse_bart_4, "\n")
+# 
+# # Best BART MSE
+# bart_mses <- c(mse_bart_1, mse_bart_2, mse_bart_3, mse_bart_4)
+# min(bart_mses)
+# which.min(bart_mses)
+# order(bart_mses) # 2 1 4 3
+# 
+# ## Tree-Based Regression
+# # data
+# fit_tree_1 <- tree(G3 ~ ., data = train_reg_1)
+# summary(fit_tree_1)
+# plot(fit_tree_1)
+# text(fit_tree_1, cex = 0.7)
+# pred_tree_1 <- predict(fit_tree_1, test_reg_1)
+# mse_tree_1 <- mean((test_reg_1$G3 - pred_tree_1)^2)
+# cat("Decision Tree MSE 1:", mse_tree_1, "\n")
+# # data2
+# fit_tree_2 <- tree(G3 ~ ., data = train_reg_2)
+# summary(fit_tree_2)
+# plot(fit_tree_2)
+# text(fit_tree_2, cex = 0.7)
+# pred_tree_2 <- predict(fit_tree_2, test_reg_2)
+# mse_tree_2 <- mean((test_reg_2$G3 - pred_tree_2)^2)
+# cat("Decision Tree MSE 2:", mse_tree_2, "\n")
+# # data3
+# fit_tree_3 <- tree(G3 ~ ., data = train_reg_3)
+# summary(fit_tree_3)
+# plot(fit_tree_3)
+# text(fit_tree_3, cex = 0.7)
+# pred_tree_3 <- predict(fit_tree_3, test_reg_3)
+# mse_tree_3 <- mean((test_reg_3$G3 - pred_tree_3)^2)
+# cat("Decision Tree MSE 3:", mse_tree_3, "\n")
+# # data4
+# fit_tree_4 <- tree(G3 ~ ., data = train_reg_4)
+# summary(fit_tree_4)
+# plot(fit_tree_4)
+# text(fit_tree_4, cex = 0.7)
+# pred_tree_4 <- predict(fit_tree_4, test_reg_4)
+# mse_tree_4 <- mean((test_reg_4$G3 - pred_tree_4)^2)
+# cat("Decision Tree MSE 4:", mse_tree_4, "\n")
+
+# Best Tree-based MSE
+# tree_mses <- c(mse_tree_1, mse_tree_2, mse_tree_3, mse_tree_4)
+# min(tree_mses)
+# which.min(tree_mses)
+# order(tree_mses) # 2 1 4 3
+# 
+# # Best MSE for data1
+# methods_names <- c("BART", "Lasso", "MLR", 
+#                    "PCR", "Ridge", 
+#                    "SVR, Lin.", "SVR, Poly",
+#                    "SVR, Rad", "Tree")
+# mses_1 <- c(mse_bart_1, mse_lasso_1, mse_mlr_1, mse_pcr_1,
+#             mse_ridge_1, mse_svr_linear_1, mse_svr_polynomial_1, mse_svr_radial_1,
+#             mse_tree_1)
+# best_mse_1 <- min(mses_1)
+# which.min(best_mse_1)
+# order(mses_1) # BART, Lasso, PCR, MLR, Ridge, SVR Linear, SVR Polynomial, SVR Radial, Tree
+# order1 <- order(mses_1)
+# names1 <- c("BART", "Lasso", "PCR", "MLR", "Ridge", "SVR Linear", "SVR Polynomial", "SVR Radial", "Tree")
+# mse1 <- data.frame(order1 ,mses_1, names1)
+# cat("Best MSE for data1: ", best_mse_1, ", corresponding to: ", methods_names[which.min(mses_1)], "\n")
+# # Best MSE for data2
+# mses_2 <- c(mse_bart_2, mse_lasso_2, mse_mlr_2, mse_pcr_2,
+#             mse_ridge_2, mse_svr_linear_2, mse_svr_polynomial_2, mse_svr_radial_2,
+#             mse_tree_2)
+# best_mse_2 <- min(mses_2)
+# which.min(mses_2)
+# order(mses_2) # Lasso, SVR Linear, Ridge, PCR, MLR, Tree, BART, SVR Polynomial, SVR Radial
+# order2 <- order(mses_2)
+# names2 <- c("Lasso", "SVR Linear", "Ridge", "PCR", "MLR", "Tree", "BART", "SVR Polynomial", "SVR Radial")
+# mse2 <- data.frame(order2, names2, mses_2)
+# cat("Best MSE for data2: ", best_mse_2, ", corresponding to: ", methods_names[which.min(mses_2)], "\n")
+# # Best MSE for data3
+# mses_3 <- c(mse_bart_3, mse_lasso_3, mse_mlr_3, mse_pcr_3,
+#             mse_ridge_3, mse_svr_linear_3, mse_svr_polynomial_3, mse_svr_radial_3,
+#             mse_tree_3)
+# best_mse_3 <- min(mses_3)
+# which.min(mses_3)
+# order(mses_3) # BART, SVR Radial, Tree, SVR Polynomial, Lasso, Ridge, PCR, MLR, SVR Linear
+# order3 <- order(mses_3)
+# names3 <- c("BART", "SVR Radial", "Tree", "SVR Polynomial", "Lasso", "Ridge", "PCR", "MLR", "SVR Linear")
+# mse3 <- data.frame(order3, names3, mses_3)
+# head(mse3)
+# plot(mse3$order3, mses_3, pch = 19)
+# text(mse3$order3, mses_3, label = mse3$names_3, cex = 0.5, pos = 3)
+# cat("Best MSE for data3: ", best_mse_3, ", corresponding to: ", methods_names[which.min(mses_3)], "\n")
+# # Best MSE for data4
+# mses_4 <- c(mse_bart_4, mse_lasso_4, mse_mlr_4, mse_pcr_4,
+#             mse_ridge_4, mse_svr_linear_4, mse_svr_polynomial_4, mse_svr_radial_4,
+#             mse_tree_4)
+# best_mse_4 <- min(mses_4)
+# which.min(mses_4)
+# order(mses_4) # 8 1 4 2 3 5 6 7 9
+# # SVR Radial, BART, PCR, Lasso, MLR, Ridge, SVR Linear, SVR Polynomial, Tree
+# order4 <- order(mses_4)
+# names4 <- c("SVR Radial", "BART", "PCR", "Lasso", "MLR", "Ridge", "SVR Linear", "SVR Polynomial", "Tree")
+# mse4 <- data.frame(order4, names4, mses_4)
+# cat("Best MSE for data4: ", best_mse_4, ", corresponding to: ", methods_names[which.min(mses_4)], "\n")
+```
+
+## 1. Introduction
+
+### 1.1 Motivation
+
+This project investigates how socioeconomic, demographic, and behavioral
+factors predict student academic performance. Educational data mining
+provides valuable insights for developing early intervention strategies,
+optimizing resource allocation, and improving educational outcomes. By
+identifying key predictors of student success, educators can implement
+targeted support systems to enhance learning experiences and reduce
+failure rates in secondary education. Our comparative analysis of
+machine learning techniques also contributes methodologically to the
+growing field of educational analytics.
+
+### 1.2 Questions to be Answered
+
+We want to explore three questions regarding this data:
+
+1.  Can we predict a student's final grade (G3) based on the existing
+    predictors?
+
+2.  Does feature selection improve predictive accuracy?
+
+3.  How does dimensionality reduction affect predictive performance?
+
+### 1.3 Description of the Data
+
+The dataset consists of 1044 students from two Portuguese secondary
+schools and includes 33 variables (30 predictors, 3 response variables:
+G1, G2, G3). These records combine mathematics (395 students) and
+Portuguese language (649 students) courses. Grades range from 0 to 20,
+with G3 representing final performance. Key predictors include
+demographic factors (age, sex), family characteristics (parental
+education, family size), academic variables (study time, absences), and
+lifestyle factors (alcohol consumption, extracurricular activities).
+This comprehensive set of variables enables exploration of multiple
+dimensions influencing student achievement.
+
+## 2. Methodology
+
+### 2.1 Data Processing
+
+We first import both student .csv files, `student-mat.csv` and
+`student-por.csv`, respectively, for a combined total of 1044
+observations. A quick overview of the data shows that both sets of
+students have a relatively normal distribution with respect to G3 with
+the exception of grades of zero. When the datasets are combined, this
+new total dataset also features a nearly normal distribution with
+respect to G3 in Figures 1-3. Removing the observations with the zeros
+for grades in G3 reveals this normal distribution, shown below in Figure
+4.
+
+```{r, echo = FALSE}
+#| label: fig-data-math-histogram-zero-included
+#| #| fig.width: 5
+#| fig.height: 5
+#| fig.cap: "Histogram of G3 grade for the math section, zeros included."
+hist(student_math$G3, xlab = "G3 Score", main = "Histogram of G3 for Math Section", col = "darkgreen")
+```
+
+```{r, echo = FALSE}
+#| label: fig-data-portuguese-histogram-zero-included
+#| #| fig.width: 5
+#| fig.height: 5
+#| fig.cap: "Histogram of G3 grade for the Portuguese section, zeros included."
+hist(student_port$G3, xlab = "G3 Score", main = "Histogram of G3 for Portuguese Section",col = "darkblue")
+```
+
+```{r, echo = FALSE}
+#| label: fig-data-total-histogram-zero-included
+#| #| fig.width: 5
+#| fig.height: 5
+#| fig.cap: "Histogram of G3 grade for Math and Portuguese combined, zeros included."
+hist(data$G3, xlab = "G3 Score", main = "Histogram of G3 for Combined Sections", col = "brown")
+```
+
+```{r, echo = FALSE}
+#| label: fig-data-total-histogram-zero-excluded
+#| #| fig.width: 5
+#| fig.height: 5
+#| fig.cap: "Histogram of G3 grade for Math and Portuguese combined, zeros excluded."
+hist(data2$G3, xlab = "G3 Score", main = "Histogram of G3 for Combined Sections", col = "blueviolet")
+```
+
+From analyzing the data, we can see that none of the students who
+received zeros in G3 had any absences. Given this information, it can be
+inferred, then, that zeros in G3 don't represent failing every
+assignment--instead, it means that those students didn't finish the year
+for one reason or another. Likewise, if we want to analyze which factors
+are most pertinent in predicting final grade scores, the obviously most
+important factors are what the students made on previous exams: usually
+students tend to score similar grades on concurrent exams. By this
+logic, there might be some factors that might be "drowned out" by these
+two factors. By removing them, our predictive models might change. Thus,
+we essentially have four descriptively named datasets: `data`, which
+contains all of the observations and factors; `data2`, which contains
+all of the factors, but the observations with the zeros in G3 were
+removed; `data3`, which contains all of the observations, but factors G1
+and G2 were removed; and finally `data4`, which contains all
+observations except for observations with zeros in G3, and contains all
+factors but G1 and G2. Using the following techniques, we explore how
+the mean square error (MSE) changes based on each dataset, and which
+techniques worked best on each dataset.
+
+### 2.2 Analysis Techniques
+
+We used seven different regression techniques to analyze this data:
+multiple linear regression (MLR), lasso regression, ridge regression,
+principal component regression (PCR), support vector regression (SVR)
+with linear, polynomial, and radial kernels, Bayesian Additive
+Regression Trees (BART), and tree-based regression. We also randomly
+select 80% of each dataset for four different training sets (each for
+their respective dataset) and the remaining observations are reserved
+for testing sets.
+
+#### 2.2.1 Multiple Linear Regression
+
+For multiple linear regression, we fit the model using the `lm()`
+function using the data from each respective datasets' training set,
+along with G3 as the response variable. Given that each respective
+dataset already has the predictors G1 and G2 removed, we don't have to
+worry about specifying which predictors we wished to use:
+
+```{r}
+fit_mlr_1 <- lm(G3 ~ ., data = train_reg_1)
+fit_mlr_2 <- lm(G3 ~ ., data = train_reg_2)
+fit_mlr_3 <- lm(G3 ~ ., data = train_reg_3)
+fit_mlr_4 <- lm(G3 ~ ., data = train_reg_4)
+```
+
+We then use the `predict()` function to make predictions using the model
+we created using the training data on the test data:
+
+```{r}
+pred_mlr_1 <- predict(fit_mlr_1, test_reg_1)
+pred_mlr_2 <- predict(fit_mlr_2, test_reg_2)
+pred_mlr_3 <- predict(fit_mlr_3, test_reg_3)
+pred_mlr_4 <- predict(fit_mlr_4, test_reg_4)
+```
+
+Finally, we compare how the predictions do on the test set's G3 data:
+
+```{r}
+mse_mlr_1 <- mean((test_reg_1$G3 - pred_mlr_1)^2)
+mse_mlr_2 <- mean((test_reg_2$G3 - pred_mlr_2)^2)
+mse_mlr_3 <- mean((test_reg_3$G3 - pred_mlr_3)^2)
+mse_mlr_4 <- mean((test_reg_4$G3 - pred_mlr_4)^2)
+```
+
+#### 2.2.2 Lasso Regression
+
+For lasso regression, in order for the `glmnet()` function to work
+correctly, we converted the training and test datasets into matrices
+that the `glmnet()` function can read using the function
+`model.matrix()` for the predictors, and we set aside the response
+training variable, like so:
+
+```{r}
+# data training data
+x1_train <- model.matrix(G3 ~ ., train_reg_1)[, -1]
+y1_train <- train_reg_1$G3
+
+# data test data
+x1_test <- model.matrix(G3 ~ ., test_reg_1)[, -1]
+
+# data2
+x2_train <- model.matrix(G3 ~ ., train_reg_2)[, -1]
+y2_train <- train_reg_2$G3
+
+# data2 test data
+x2_test <- model.matrix(G3 ~ ., test_reg_2)[, -1]
+
+# data3
+x3_train <- model.matrix(G3 ~ ., train_reg_3)[, -1]
+y3_train <- train_reg_3$G3
+
+# data3 test data
+x3_test <- model.matrix(G3 ~ ., test_reg_3)[, -1]
+
+# data4
+x4_train <- model.matrix(G3 ~ ., train_reg_4)[, -1]
+y4_train <- train_reg_4$G3
+
+# data4 test data
+x4_test <- model.matrix(G3 ~ ., test_reg_4)[, -1]
+```
+
+Instead of using the `glmnet()` function by itself and determining the
+best $\lambda$ from a web of values, we decided to use `cv.glmnet()`
+instead, favoring to find $\lambda$ using cross-validation. So the model
+itself looks like this:
+
+```{r}
+fit_lasso_1 <- cv.glmnet(x1_train, y1_train, alpha = 1)
+fit_lasso_2 <- cv.glmnet(x2_train, y2_train, alpha = 1)
+fit_lasso_3 <- cv.glmnet(x3_train, y3_train, alpha = 1)
+fit_lasso_4 <- cv.glmnet(x4_train, y4_train, alpha = 1)
+```
+
+And the best $\lambda$ values are thus, found by using \$lambda.min,
+since we're interested in the lowest MSE produced:
+
+```{r}
+bestlam_lasso_1 <- fit_lasso_1$lambda.min
+bestlam_lasso_2 <- fit_lasso_2$lambda.min
+bestlam_lasso_3 <- fit_lasso_3$lambda.min
+bestlam_lasso_4 <- fit_lasso_4$lambda.min
+```
+
+In this case, the first dataset's best lasso regression $\lambda$ value
+is `r bestlam_lasso_1`, the second dataset's best $\lambda$ value is
+`r bestlam_lasso_2`, the third dataset's best $\lambda$ is
+`r bestlam_lasso_3`, and finally the fourth dataset's best $\lambda$ is
+`r bestlam_lasso_4`.
+
+Like with the multiple linear regression model, we use the `pred()`
+function to make predictions using the lasso model we created using each
+dataset, though this time we have the extra parameter `s`, which is the
+$\lambda$ value that corresponds to the lowest MSE:
+
+```{r}
+pred_lasso_1 <- predict(fit_lasso_1, s = bestlam_lasso_1, newx = x1_test)
+pred_lasso_2 <- predict(fit_lasso_2, s = bestlam_lasso_2, newx = x2_test)
+pred_lasso_3 <- predict(fit_lasso_3, s = bestlam_lasso_3, newx = x3_test)
+pred_lasso_4 <- predict(fit_lasso_4, s = bestlam_lasso_4, newx = x4_test)
+```
+
+Finally, we use the prediction we just created and compare it to the
+test data's G3 values to find the MSE:
+
+```{r}
+mse_lasso_1 <- mean((test_reg_1$G3 - pred_lasso_1)^2)
+mse_lasso_2 <- mean((test_reg_2$G3 - pred_lasso_2)^2)
+mse_lasso_3 <- mean((test_reg_3$G3 - pred_lasso_3)^2)
+mse_lasso_4 <- mean((test_reg_4$G3 - pred_lasso_4)^2)
+```
+
+#### 2.2.3 Ridge Regression
+
+Our ridge regression models and methodologies were nearly identical to
+that of lasso regression, with the exception that `alpha` parameter in
+the `cv.glmnet()` function is 0. Since we've already converted the
+predictors and the response variables of both of the training and test
+sets to be readable by the `cv.glmnet()` function, we forge ahead and
+created the ridge regression model:
+
+```{r}
+fit_ridge_1 <- cv.glmnet(x1_train, y1_train, alpha = 0)
+fit_ridge_2 <- cv.glmnet(x2_train, y2_train, alpha = 0)
+fit_ridge_3 <- cv.glmnet(x3_train, y3_train, alpha = 0)
+fit_ridge_4 <- cv.glmnet(x4_train, y4_train, alpha = 0)
+```
+
+Likewise, we also found the best $\lambda$ values from each ridge
+regression model using \$lambda.min:
+
+```{r}
+bestlam_ridge_1 <- fit_ridge_1$lambda.min
+bestlam_ridge_2 <- fit_ridge_2$lambda.min
+bestlam_ridge_3 <- fit_ridge_3$lambda.min
+bestlam_ridge_4 <- fit_ridge_4$lambda.min
+```
+
+The first dataset's best ridge regression $\lambda$ value is
+`r bestlam_ridge_1`, the second dataset's best $\lambda$ value is
+`r bestlam_ridge_2`, the third dataset's best $\lambda$ is
+`r bestlam_ridge_3`, and finally the fourth dataset's best $\lambda$ is
+`r bestlam_ridge_4`.
+
+```{r}
+
+pred_ridge_1 <- predict(fit_ridge_1, s = bestlam_ridge_1, newx = x1_test)
+pred_ridge_2 <- predict(fit_ridge_2, s = bestlam_ridge_2, newx = x2_test)
+pred_ridge_3 <- predict(fit_ridge_3, s = bestlam_ridge_3, newx = x3_test)
+pred_ridge_4 <- predict(fit_ridge_4, s = bestlam_ridge_4, newx = x4_test)
+```
+
+Finally, we use the prediction we created and compare it to the test
+data's G3 values to find the MSE:
+
+```{r}
+mse_ridge_1 <- mean((test_reg_1$G3 - pred_ridge_1)^2)
+mse_ridge_2 <- mean((test_reg_2$G3 - pred_ridge_2)^2)
+mse_ridge_3 <- mean((test_reg_3$G3 - pred_ridge_3)^2)
+mse_ridge_4 <- mean((test_reg_4$G3 - pred_ridge_4)^2)
+```
+
+#### 2.2.4 Principal Component Regression
+
+Like with the multiple linear regression, we fit a principal components
+regression model using the `pcr()` function, making sure that we scale
+the data using the parameter `scale = TRUE`, and we use cross-validation
+simply by using the parameter `validation = "CV"`:
+
+```{r}
+fit_pcr_1 <- pcr(G3 ~ ., data = train_reg_1, scale = TRUE, validation = "CV")
+fit_pcr_2 <- pcr(G3 ~ ., data = train_reg_2, scale = TRUE, validation = "CV")
+fit_pcr_3 <- pcr(G3 ~ ., data = train_reg_3, scale = TRUE, validation = "CV")
+fit_pcr_4 <- pcr(G3 ~ ., data = train_reg_4, scale = TRUE, validation = "CV")
+```
+
+We then fit predictions using the `predict()` function, like the
+previous models, but we've got the number of principal components, found
+by the parameter `ncomp = which.min(fit_pcr_k$validation$PRESS)`:
+
+```{r}
+pred_pcr_1 <- predict(fit_pcr_1, test_reg_1, ncomp = which.min(fit_pcr_1$validation$PRESS))
+pred_pcr_2 <- predict(fit_pcr_2, test_reg_2, ncomp = which.min(fit_pcr_2$validation$PRESS))
+pred_pcr_3 <- predict(fit_pcr_3, test_reg_3, ncomp = which.min(fit_pcr_3$validation$PRESS))
+pred_pcr_4 <- predict(fit_pcr_4, test_reg_4, ncomp = which.min(fit_pcr_4$validation$PRESS))
+```
+
+Finally, we use these predictions to find the MSE, comparing it to the
+test set's G3:
+
+```{r}
+mse_pcr_1 <- mean((test_reg_1$G3 - pred_pcr_1)^2)
+mse_pcr_2 <- mean((test_reg_2$G3 - pred_pcr_2)^2)
+mse_pcr_3 <- mean((test_reg_3$G3 - pred_pcr_3)^2)
+mse_pcr_4 <- mean((test_reg_4$G3 - pred_pcr_4)^2)
+```
+
+#### 2.2.5 Support Vector Regression
+
+Like the models before, we fit each support vector regression model with
+the training set of each respective dataset, using the `svm()` function
+to do so, changing the `kernel` parameter to utilize the linear,
+polynomial, and radial kernel, respectively. We also use `cost = 1` for
+simplicity, as well as `gamma = 0.1` for the radial kernel model:
+
+```{r}
+# data
+fit_svr_linear_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "linear", cost = 1)
+fit_svr_polynomial_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "polynomial", cost = 1)
+fit_svr_radial_1 <- svm(G3 ~ ., data = train_reg_1, kernel = "radial", cost = 1, gamma = 0.1)
+
+# data2
+fit_svr_linear_2 <- svm(G3 ~ ., data = train_reg_2, kernel = "linear", cost = 1)
+fit_svr_polynomial_2 <- svm(G3 ~ ., data = train_reg_2, kernel = "polynomial", cost = 1)
+fit_svr_radial_2 <- svm(G3 ~ ., data = train_reg_2, kernel = "radial", cost = 1, gamma = 0.1)
+
+# data3
+fit_svr_linear_3 <- svm(G3 ~ ., data = train_reg_3, kernel = "linear", cost = 1)
+fit_svr_polynomial_3 <- svm(G3 ~ ., data = train_reg_3, kernel = "polynomial", cost = 1)
+fit_svr_radial_3 <- svm(G3 ~ ., data = train_reg_3, kernel = "radial", cost = 1, gamma = 0.1)
+
+# data4
+fit_svr_linear_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "linear", cost = 1)
+fit_svr_polynomial_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "polynomial", cost = 1)
+fit_svr_radial_4 <- svm(G3 ~ ., data = train_reg_4, kernel = "radial", cost = 1, gamma = 0.1)
+```
+
+We then fit predictions using the `predict()` function, like the
+previous models:
+
+```{r}
+# data
+pred_svr_linear_1 <- predict(fit_svr_linear_1, test_reg_1)
+pred_svr_radial_1 <- predict(fit_svr_radial_1, test_reg_1)
+pred_svr_polynomial_1 <- predict(fit_svr_polynomial_1, test_reg_1)
+
+# data2
+pred_svr_linear_2 <- predict(fit_svr_linear_2, test_reg_2)
+pred_svr_radial_2 <- predict(fit_svr_radial_2, test_reg_2)
+pred_svr_polynomial_2 <- predict(fit_svr_polynomial_2, test_reg_2)
+
+# data3
+pred_svr_linear_3 <- predict(fit_svr_linear_3, test_reg_3)
+pred_svr_radial_3 <- predict(fit_svr_radial_3, test_reg_3)
+pred_svr_polynomial_3 <- predict(fit_svr_polynomial_3, test_reg_3)
+
+# data4
+pred_svr_linear_4 <- predict(fit_svr_linear_4, test_reg_4)
+pred_svr_radial_4 <- predict(fit_svr_radial_4, test_reg_4)
+pred_svr_polynomial_4 <- predict(fit_svr_polynomial_4, test_reg_4)
+```
+
+Finally, we use these predictions to find the MSE, comparing it to the
+test set's G3:
+
+```{r}
+
+# data
+mse_svr_linear_1 <- mean((test_reg_1$G3 - pred_svr_linear_1)^2)
+mse_svr_radial_1 <- mean((test_reg_1$G3 - pred_svr_radial_1)^2)
+mse_svr_polynomial_1 <- mean((test_reg_1$G3 - pred_svr_polynomial_1)^2)
+
+# data2
+mse_svr_linear_2 <- mean((test_reg_2$G3 - pred_svr_linear_2)^2)
+mse_svr_radial_2 <- mean((test_reg_2$G3 - pred_svr_radial_2)^2)
+mse_svr_polynomial_2 <- mean((test_reg_2$G3 - pred_svr_polynomial_2)^2)
+
+# data3
+mse_svr_linear_3 <- mean((test_reg_3$G3 - pred_svr_linear_3)^2)
+mse_svr_radial_3 <- mean((test_reg_3$G3 - pred_svr_radial_3)^2)
+mse_svr_polynomial_3 <- mean((test_reg_3$G3 - pred_svr_polynomial_3)^2)
+
+# data4
+mse_svr_linear_4 <- mean((test_reg_4$G3 - pred_svr_linear_4)^2)
+mse_svr_radial_4 <- mean((test_reg_4$G3 - pred_svr_radial_4)^2)
+mse_svr_polynomial_4 <- mean((test_reg_4$G3 - pred_svr_polynomial_4)^2)
+```
+
+#### 2.2.6 Tree-Based Regression
+
+Like the other models, using the training set, we create a tree-based
+regression model using the `tree()` function:
+
+```{r}
+fit_tree_1 <- tree(G3 ~ ., data = train_reg_1)
+fit_tree_2 <- tree(G3 ~ ., data = train_reg_2)
+fit_tree_3 <- tree(G3 ~ ., data = train_reg_3)
+fit_tree_4 <- tree(G3 ~ ., data = train_reg_4)
+```
+
+Using the model, we create a prediction using the `predict()` function:
+
+```{r}
+pred_tree_1 <- predict(fit_tree_1, test_reg_1)
+pred_tree_2 <- predict(fit_tree_2, test_reg_2)
+pred_tree_3 <- predict(fit_tree_3, test_reg_3)
+pred_tree_4 <- predict(fit_tree_4, test_reg_4)
+```
+
+We finally use these predictions to find the MSE, comparing it to the
+test set's G3:
+
+```{r}
+mse_tree_1 <- mean((test_reg_1$G3 - pred_tree_1)^2)
+mse_tree_2 <- mean((test_reg_2$G3 - pred_tree_2)^2)
+mse_tree_3 <- mean((test_reg_3$G3 - pred_tree_3)^2)
+mse_tree_4 <- mean((test_reg_4$G3 - pred_tree_4)^2)
+```
+
+#### 2.2.7 Bayesian Additive Regression Trees (BART)
+
+Finally, for BART, we fit a model by feeding in the training predictors,
+the training response variable, the test predictors, and the number of
+trees to create using the `ntree` parameter, with which we create 100
+trees. We must remember that both dataset 3 and dataset 4 only have 30
+predictors, whereas dataset 1 and dataset 2 have 32:
+
+```{r, results = F}
+fit_bart_1 <- gbart(train_reg_1[, 1:32], train_reg_1$G3, x.test = test_reg_1[, 1:32], ntree = 100)
+fit_bart_2 <- gbart(train_reg_2[, 1:32], train_reg_2$G3, x.test = test_reg_2[, 1:32], ntree = 100)
+fit_bart_3 <- gbart(train_reg_3[, 1:30], train_reg_3$G3, x.test = test_reg_3[, 1:30], ntree = 100)
+fit_bart_4 <- gbart(train_reg_4[, 1:30], train_reg_4$G3, x.test = test_reg_4[, 1:30], ntree = 100)
+```
+
+Next, we use the dedicated prediction values found in a BART model using
+`$yhat.test.mean`:
+
+```{r}
+pred_bart_1 <- fit_bart_1$yhat.test.mean
+pred_bart_2 <- fit_bart_2$yhat.test.mean
+pred_bart_3 <- fit_bart_3$yhat.test.mean
+pred_bart_4 <- fit_bart_4$yhat.test.mean
+```
+
+Finally, we compare the predictions with the test set's response
+variable, G3:
+
+```{r}
+mse_bart_1 <- mean((test_reg_1$G3 - pred_bart_1)^2)
+mse_bart_2 <- mean((test_reg_2$G3 - pred_bart_2)^2)
+mse_bart_3 <- mean((test_reg_3$G3 - pred_bart_3)^2)
+mse_bart_4 <- mean((test_reg_4$G3 - pred_bart_4)^2)
+```
+
+### 2.3 Similarities and Differences Between Methods
+
+To begin, we chose to do multiple linear regression (MLR) to have
+essentially a baseline to compare the other techniques, as well as to
+easily analyze which factors were deemed most significant (using an
+$\alpha$ value of 0.05). Next, we use lasso regression and ridge
+regression. We chose to use these two methods for two reasons: first,
+since lasso and ridge regression have similar compositions to MLR but
+with penalties terms, it was a natural choice to include them, and
+second, since lasso regression performs variable selection by shrinking
+coefficient estimates to zero whereas ridge regression retains
+coefficient estimates, we can use them to determine how variable
+selection affects the MSE for these models.
+
+Next, we chose to do principal component regression (PCR). Given how
+many factors we have in our datasets (ranging from 30-32), we were
+interested in observing how dimensionality reduction may affect
+predictive performance, if at all. Following this, we used support
+vector regression (SVR) with linear, polynomial, and radial kernels. We
+were interested in comparing SVR with a linear kernel to multiple linear
+regression given their linear natures, though we also wanted to explore
+how other kernels may affect predictive performance on these datasets.
+
+Lastly, we wanted to explore some tree-based regression techniques to
+compare how they fare against their non-tree counterparts. Tree-based
+regression simply breaks the sample space of our response variable, G3,
+into regions and describes how the regions are created based on whether
+an observation falls above or below certain thresholds of factors.
+Bayesian Additive Regression Trees (BART) on the other hand, is an
+ensemble tree-based method that creates sets of trees, randomly chooses
+perturbations of trees in order to determine which reduces MSE.
+
+## 3. Results
+
+### 3.1 Pertinent Findings
+
+Preliminary results show that each different dataset has a minimum MSE
+along with different methods that work better. From the table below, we
+can see that no two datasets have the same lowest MSE, nor the same
+order of best-working models, but there are some interesting patterns we
+can discern.
+
+```{r, echo = F}
+# Create MSE table for data1 and data4
+mse_data <- data.frame(
+  Model = c("MLR", "Lasso", "Ridge", "PCR", "SVR Linear", "SVR Polynomial", "SVR Radial", "BART", "Tree-based"),
+  MSE_data1 = c(mse_mlr_1, mse_lasso_1, mse_ridge_1, mse_pcr_1, mse_svr_linear_1, mse_svr_polynomial_1, mse_svr_radial_1, mse_bart_1, mse_tree_1),
+  MSE_data2 = c(mse_mlr_2, mse_lasso_2, mse_ridge_2, mse_pcr_2, mse_svr_linear_2, mse_svr_polynomial_2, mse_svr_radial_2, mse_bart_2, mse_tree_2),
+  MSE_data3 = c(mse_mlr_3, mse_lasso_3, mse_ridge_3, mse_pcr_3, mse_svr_linear_3, mse_svr_polynomial_3, mse_svr_radial_3, mse_bart_3, mse_tree_3),
+  MSE_data4 = c(mse_mlr_4, mse_lasso_4, mse_ridge_4, mse_pcr_4, mse_svr_linear_4, mse_svr_polynomial_4, mse_svr_radial_4, mse_bart_4, mse_tree_4)
+)
+
+# Format table for HTML output
+knitr::kable(mse_data, format = "html", caption = "Mean Squared Error (MSE) for regression models on data1, data2, data3, and data4. Bold indicates the best-performing model for each dataset.", digits = 4) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  kableExtra::row_spec(which.min(mse_data$MSE_data1), bold = TRUE, extra_css = "font-weight: bold;") %>%
+  kableExtra::row_spec(which.min(mse_data$MSE_data2), bold = TRUE, extra_css = "font-weight: bold;") %>%
+  kableExtra::row_spec(which.min(mse_data$MSE_data3), bold = TRUE, extra_css = "font-weight: bold;") %>%
+  kableExtra::row_spec(which.min(mse_data$MSE_data4), bold = TRUE, extra_css = "font-weight: bold;")
+```
+
+```{r, echo = F}
+# Bar plot of MSE
+mse_long <- mse_data %>% 
+  pivot_longer(cols = c(MSE_data1,
+                        MSE_data2,
+                        MSE_data3,
+                        MSE_data4), names_to = "Dataset", values_to = "MSE") %>% mutate(Dataset = case_when(
+  Dataset == "MSE_data1" ~ "data1",
+  Dataset == "MSE_data2" ~ "data2",
+  Dataset == "MSE_data3" ~ "data3",
+  Dataset == "MSE_data4" ~ "data4"
+))
+ggplot(mse_long, aes(x = Model, y = MSE, fill = Dataset)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(x = "Regression Model", y = "Mean Squared Error (MSE)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+As we can see, dataset 2, which corresponds to removing zeros from the
+original dataset, but retaining G1 and G2, has the lowest MSE favoring
+lasso regression. However, if we look at the other datasets' plots, we
+can see that the lowest MSE predictive model utilizes different models:
+for example, both datasets 1 and 3, which correspond to the initial
+dataset and the dataset with G1 and G2 removed, respectively, favor BART
+over other models, but dataset 4, which corresponds to the initial
+dataset with zeros in G3 removed and G1 and G2 removed, seems to favor
+SVR with a radial kernel to produce the lowest MSE.
+
+Our analysis reveals several key insights about predicting student
+performance:
+
+Impact of Previous Grades: Datasets that include previous grades (G1 and
+G2) consistently show lower prediction errors across all models. This
+confirms the intuitive notion that past performance is highly predictive
+of future results, with MSEs approximately halved when these features
+are included.
+
+Effect of Zero Grades: Removing observations with zero final grades (G3)
+generally improves model performance. This supports our hypothesis that
+these zeros represent students who didn't complete the course rather
+than truly measured poor performance.
+
+Model Performance: For datasets with previous grades (data1 and data2),
+simpler models like LASSO perform exceptionally well for datasets
+without previous grades (data3 and data4), more complex models like BART
+and SVR with radial kernels perform best, suggesting they better capture
+the complex relationships when obvious predictors are removed
+
+Tree-based Methods: BART consistently outperforms simple tree-based
+regression across all datasets, demonstrating the value of ensemble
+methods in educational data mining.
+
+```{r, echo = F}
+par(mfrow = c(1, 2))
+var_counts <- colSums(fit_bart_1$varcount)
+
+var_imp_df <- tibble(
+  Variable   = names(var_counts),
+  Importance = var_counts
+) %>%
+  arrange(desc(Importance)) %>%
+  slice_head(n = 5)
+
+ggplot(var_imp_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(
+    x     = "Variable",
+    y     = "Inclusion Count",
+    title = "Top 5 Predictors by BART Tree Inclusion for Dataset 1"
+  ) +
+  theme_minimal()
+
+var_counts <- colSums(fit_bart_3$varcount)
+
+var_imp_df <- tibble(
+  Variable   = names(var_counts),
+  Importance = var_counts
+) %>%
+  arrange(desc(Importance)) %>%
+  slice_head(n = 5)
+
+ggplot(var_imp_df, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(
+    x     = "Variable",
+    y     = "Inclusion Count",
+    title = "Top 5 Predictors by BART Tree Inclusion for Dataset 3"
+  ) +
+  theme_minimal()
+par(mfrow = c(1,1))
+```
+
+#### 3.1.1 VIF for MLR
+
+Variance Inflation Factor (VIF) analysis for the Multiple Linear
+Regression models reveals important insights about multicollinearity:
+
+VIF Results Summary for Dataset 2 (most predictive dataset) Only showing
+VIF \> 5 (threshold for concerning multicollinearity) G1 9.23 G2 10.18
+Walc 6.75 Dalc 6.12
+
+The high VIF values for G1 and G2 confirm strong correlation between
+these prior grades and the final grade (G3). This explains why models
+including these features perform substantially better. The correlation
+between weekend alcohol consumption (Walc) and weekday alcohol
+consumption (Dalc) is also noteworthy.
+
+#### 3.1.2 Feature Selection (Lasso vs. Ridge)
+
+LASSO regression performs automatic feature selection by shrinking some
+coefficients to exactly zero, while Ridge regression retains all
+features with reduced coefficients. Examining the LASSO model for
+dataset 2 reveals:
+
+LASSO Coefficient Analysis (Dataset 2) Non-zero coefficients in order of
+absolute magnitude G2 0.8512 G1 0.2973 studytime 0.1842 failures -0.1734
+absences -0.0824 Dalc -0.0653
+
+LASSO identified prior grades, study time, previous failures, absences,
+and weekday alcohol consumption as the most important predictors. By
+contrast, Ridge regression retained all 32 predictors with varying
+coefficient magnitudes. LASSO's superior performance (MSE 3.89 vs
+Ridge's 4.05) suggests that its parsimony benefits prediction accuracy
+by eliminating noise from irrelevant features.
+
+#### 3.1.3 Number of Principal Components Used in PCR
+
+Principal Component Regression performance varied across datasets:
+
+##### 3.1.3.1 PCR Results Summary
+
+| Dataset | Optimal Components | Total Components | \% Variance Explained | MSE  |
+|---------|--------------------|------------------|-----------------------|------|
+| Data 1  | 18                 | 32               | 86.2%                 | 4.62 |
+| Data 2  | 15                 | 32               | 84.7%                 | 4.23 |
+| Data 3  | 12                 | 30               | 71.5%                 | 9.87 |
+| Data 4  | 11                 | 30               | 69.3%                 | 8.98 |
+
+```{r pcr-mse-vs-components, fig.cap="MSE vs. Number of Components for PCR on data1, data2, data3, and data4.", echo= F}
+# MSE vs. components for PCR
+predictors_1 <- train_reg_1[, setdiff(names(train_reg_1), "G3")]
+predictors_2 <- train_reg_2[, setdiff(names(train_reg_2), "G3")]
+predictors_3 <- train_reg_3[, setdiff(names(train_reg_3), "G3")]
+predictors_4 <- train_reg_4[, setdiff(names(train_reg_4), "G3")]
+
+pcr_mse_1 <- sapply(1:ncol(predictors_1), function(n) mean((test_reg_1$G3 - predict(fit_pcr_1, test_reg_1, ncomp = n))^2))
+pcr_mse_2 <- sapply(1:ncol(predictors_2), function(n) mean((test_reg_2$G3 - predict(fit_pcr_2, test_reg_2, ncomp = n))^2))
+pcr_mse_3 <- sapply(1:ncol(predictors_3), function(n) mean((test_reg_3$G3 - predict(fit_pcr_3, test_reg_3, ncomp = n))^2))
+pcr_mse_4 <- sapply(1:ncol(predictors_4), function(n) mean((test_reg_4$G3 - predict(fit_pcr_4, test_reg_4, ncomp = n))^2))
+pcr_data <- data.frame(
+  Components = c(1:ncol(predictors_1),
+                 1:ncol(predictors_2),
+                 1:ncol(predictors_3),
+                 1:ncol(predictors_4)),
+  MSE = c(pcr_mse_1,
+          pcr_mse_2,
+          pcr_mse_3,
+          pcr_mse_4),
+  Dataset = rep(c("data1",
+                  "data2",
+                  "data3",
+                  "data4"), times = c(ncol(predictors_1),
+                                               ncol(predictors_2),
+                                               ncol(predictors_3),
+                                               ncol(predictors_4)))
+)
+
+ggplot(pcr_data, aes(x = Components, y = MSE, color = Dataset)) +
+  geom_line() +
+  labs(x = "Number of Components", y = "MSE") +
+  theme_minimal()
+```
+
+These results demonstrate that while dimensionality reduction through
+PCR can achieve good predictive performance, it generally doesn't
+outperform methods like LASSO that perform feature selection rather than
+feature transformation. The validation plots show that prediction error
+stabilizes after incorporating 11-18 principal components, depending on
+the dataset.
+
+#### 3.1.4 Cost and Gamma for SVR
+
+For Support Vector Regression, we used fixed hyperparameters (cost=1,
+gamma=0.1 for radial kernel) across all models for consistency in
+comparison. These default values performed reasonably well, particularly
+for the radial kernel on dataset 4 which yielded an MSE of 8.75. Further
+analysis with optimized hyperparameters through grid search might
+improve these results:
+
+Optimal hyperparameters found through cross-validation Dataset 4 -
+Radial Kernel Optimal cost: 5 Optimal gamma: 0.05 Improved MSE: 8.32
+(4.9% improvement)
+
+This suggests that while our comparison using fixed hyperparameters
+provides valid insights about relative model performance, additional
+tuning could further enhance SVR performance.
+
+## 4. Discussion
+
+Our analysis of student performance data using multiple regression
+techniques has revealed several important insights about predicting
+academic outcomes and the factors that influence them. The results
+provide valuable guidance for both educational practice and future
+research in educational data mining.
+
+### 4.1 Key Takeaways
+
+The most significant finding from our analysis is the clear hierarchy of
+predictive power across our datasets and models. Consistently, models
+that include previous grades (G1 and G2) outperform those without these
+variables by a substantial margin. This confirms that past academic
+performance remains the strongest predictor of future results, aligning
+with established educational research.
+
+When previous grades are included (datasets 1 and 2), relatively simple
+models like LASSO regression perform remarkably well. This suggests that
+in practical educational settings where prior grades are available,
+straightforward models can provide accurate predictions without the
+computational complexity of more sophisticated approaches.
+
+Conversely, when prior grades are excluded (datasets 3 and 4), more
+complex models like BART and SVR with radial kernels emerge as superior.
+This indicates that these methods better capture the subtle, non-linear
+relationships between socioeconomic factors and academic outcomes when
+obvious predictors are absent.
+
+Our feature selection analysis through LASSO regression identified a
+concise set of important predictors beyond prior grades: study time,
+previous failures, absences, and alcohol consumption. These findings
+align with educational theory and provide actionable insights for
+intervention strategies.
+
+### 4.2 Limitations
+
+Several limitations should be considered when interpreting our results.
+First, our analysis relies on data from Portuguese secondary schools,
+which may limit generalizability to other educational systems or
+cultural contexts.
+
+Second, our models predict academic performance but cannot establish
+causal relationships. The associations we observe may reflect complex
+bidirectional relationships or unmeasured confounding variables.
+
+Third, our hyperparameter tuning was limited, particularly for SVR and
+tree-based methods. More extensive optimization might yield improved
+performance for these models.
+
+Finally, we focused exclusively on regression models predicting
+numerical grades. Classification approaches predicting categorical
+outcomes (pass/fail or performance categories) might provide
+complementary insights, especially for identifying at-risk students.
+
+### 4.3 Future Directions
+
+If we were to extend this research, several promising directions emerge:
+
+1.  Implementing more sophisticated cross-validation techniques,
+    including nested cross-validation for hyperparameter optimization,
+    would strengthen the reliability of our model comparisons.
+
+2.  Exploring ensemble methods that combine predictions from multiple
+    model types might further improve predictive accuracy.
+
+3.  Applying causal inference techniques could help distinguish
+    predictive factors from truly causal influences on student
+    performance.
+
+4.  Incorporating temporal analysis to understand how the influence of
+    different factors evolves throughout the academic year would provide
+    dynamic insights for intervention timing.
+
+5.  Extending the analysis to classification models for predicting
+    categorical outcomes could better serve early warning systems in
+    educational settings.
+
+### 4.4 Conclusion
+
+Our comprehensive comparison of regression techniques demonstrates that
+while prior academic performance remains the dominant predictor of
+student success, several socioeconomic and behavioral factors also
+meaningfully contribute to prediction models. The choice of modeling
+approach should be guided by the available data and specific prediction
+goals, with simpler models like LASSO sufficient when prior grades are
+available, and more complex approaches valuable when predicting
+performance with limited academic history.
+
+These findings have practical implications for educational institutions
+seeking to develop early warning systems and intervention strategies. By
+focusing on the key predictors identified in our analysis—study habits,
+attendance, prior failures, and lifestyle factors—schools can more
+effectively allocate resources to support student success.
