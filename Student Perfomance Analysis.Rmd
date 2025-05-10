@@ -1,6 +1,6 @@
 ---
 title: "STAT 5533 Project Draft"
-author: "Sitharama Bhargav, Anish Paudyal, Mason Robinson"
+author: "Anish Paudyal"
 date: "2025-04-26"
 output:
   html_document
